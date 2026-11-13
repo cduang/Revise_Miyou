@@ -24,7 +24,7 @@ jobs:
           shasum -a 256 build/ReviseMiyouSchedule.dylib > build/SHA256SUMS
       - uses: actions/upload-artifact@v6
         with:
-          name: ReviseMiyouSchedule-inline-switch-v2-arm64
+          name: ReviseMiyouSchedule-native-alert-v3-arm64
           path: |
             build/ReviseMiyouSchedule.dylib
             build/SHA256SUMS

@@ -2,6 +2,7 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #include <string.h>
+#include <stdlib.h>
 #import "TimeWindow.h"
 static NSString *const Enabled = @"ReviseMiyou.KeywordSchedule.Enabled";
 static NSString *const Start = @"ReviseMiyou.KeywordSchedule.Start";
@@ -40,9 +41,52 @@ static void scheduleChanged(id self, SEL cmd, id sender) {
     [NSUserDefaults.standardUserDefaults setBool:enabled forKey:Enabled];
     reloadSettings(self);
 }
+// Reuse the host alert by its API, not an obfuscated or version-specific class name.
+static Class nativeAlertClass(void) {
+    unsigned count=0; Class *classes=objc_copyClassList(&count); Class found=Nil;
+    NSArray *names=@[@"initWithTitle:message:",@"showTextFieldWithMaxLen:",@"setTextFieldDefaultText:",@"getTextFieldText",@"addBtnTitle:handler:",@"show"];
+    unsigned counts[]={4,3,3,2,4,2};
+    for(unsigned i=0;i<count;i++) {
+        BOOL ok=YES;
+        for(unsigned j=0;j<names.count;j++) {
+            Method m=class_getInstanceMethod(classes[i],NSSelectorFromString(names[j]));
+            if(!m || method_getNumberOfArguments(m)!=counts[j]) {ok=NO;break;}
+        }
+        if(ok) { if(found) {found=Nil;break;} found=classes[i]; }
+    }
+    free(classes); return found;
+}
+static BOOL showNativeSchedule(id owner) {
+    Class cls=nativeAlertClass(); if(!cls) return NO;
+    NSUserDefaults *d=NSUserDefaults.standardUserDefaults;
+    id a=((id(*)(id,SEL))objc_msgSend)((id)cls,@selector(alloc));
+    a=((id(*)(id,SEL,id,id))objc_msgSend)(a,NSSelectorFromString(@"initWithTitle:message:"),@"关键词在线时间段",@"请输入 HH:mm-HH:mm，例如 08:00-23:00。该时段不回复，范围外按原规则回复；支持跨午夜。相同起止表示不暂停。");
+    if(!a) return NO;
+    ((void(*)(id,SEL,NSUInteger))objc_msgSend)(a,NSSelectorFromString(@"showTextFieldWithMaxLen:"),11);
+    NSString *text=[NSString stringWithFormat:@"%@-%@",formatTime([d integerForKey:Start]),formatTime([d integerForKey:End])];
+    ((void(*)(id,SEL,id))objc_msgSend)(a,NSSelectorFromString(@"setTextFieldDefaultText:"),text);
+    // Weak reference avoids a retained alert -> callback -> alert cycle.
+    __weak id weakAlert=a;
+    void (^save)(id)=^(id ignored) {
+        id alert=weakAlert; if(!alert) return;
+        id value=((id(*)(id,SEL))objc_msgSend)(alert,NSSelectorFromString(@"getTextFieldText"));
+        if(![value isKindOfClass:NSString.class]) return;
+        NSArray *parts=[value componentsSeparatedByString:@"-"]; int start,end;
+        if(parts.count!=2 || !parseTime(parts[0],&start) || !parseTime(parts[1],&end)) {
+            UIAlertController *error=[UIAlertController alertControllerWithTitle:@"时间格式错误" message:@"未保存，请输入 HH:mm-HH:mm，例如 08:00-23:00。" preferredStyle:UIAlertControllerStyleAlert];
+            [error addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleCancel handler:nil]];
+            [(UIViewController *)owner presentViewController:error animated:YES completion:nil]; return;
+        }
+        [d setInteger:start forKey:Start];[d setInteger:end forKey:End];reloadSettings(owner);
+    };
+    ((void(*)(id,SEL,id,id))objc_msgSend)(a,NSSelectorFromString(@"addBtnTitle:handler:"),@"取消",^(id ignored){});
+    ((void(*)(id,SEL,id,id))objc_msgSend)(a,NSSelectorFromString(@"addBtnTitle:handler:"),@"保存",save);
+    ((void(*)(id,SEL))objc_msgSend)(a,NSSelectorFromString(@"show")); return YES;
+}
 static void editSchedule(id self, SEL cmd) {
     UIViewController *vc=(UIViewController *)self;
     if(vc.presentedViewController) return;
+    if(showNativeSchedule(self)) return;
     NSUserDefaults *d=NSUserDefaults.standardUserDefaults;
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"关键词在线时间段" message:@"在线时间内不回复，时间段外按原关键词规则回复。支持跨午夜；相同起止表示不暂停。" preferredStyle:UIAlertControllerStyleAlert];
     [a addTextFieldWithConfigurationHandler:^(UITextField *t){t.placeholder=@"开始 HH:mm";t.text=formatTime([d integerForKey:Start]);}];
@@ -115,15 +159,24 @@ static BOOL installUI(void) {
     NSLog(@"[ReviseMiyou] inline keyword schedule switch installed (v2)");
     return YES;
 }
+// This only bypasses the local follow prerequisite. It is not a security fix.
+static BOOL followSatisfied(id self, SEL cmd) { return YES; }
+static BOOL installFollowCompatibility(void) {
+    Class cls=NSClassFromString(@"MiYouConfig"); SEL sel=NSSelectorFromString(@"isFollowAuthor");
+    if(!hasSignature(cls,sel,2,"B")) return NO;
+    replaceMethod(cls,sel,(IMP)followSatisfied);
+    NSLog(@"[ReviseMiyou] local follow prerequisite bypass installed"); return YES;
+}
 __attribute__((constructor)) static void initSchedule(void) {
     dispatch_async(dispatch_get_main_queue(),^{
         [NSUserDefaults.standardUserDefaults registerDefaults:@{Enabled:@NO,Start:@480,End:@1380}];
-        __block BOOL getter=NO,ui=NO; __block int attempts=0;
+        __block BOOL getter=NO,ui=NO,follow=NO; __block int attempts=0;
         dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
         dispatch_source_set_timer(timer,DISPATCH_TIME_NOW,NSEC_PER_SEC,NSEC_PER_SEC/10);
         dispatch_source_set_event_handler(timer,^{
             if(!getter) getter=installGetter(); if(!ui) ui=installUI();
-            if((getter&&ui)||++attempts>=120) {NSLog(@"[ReviseMiyou] getter=%d UI=%d",getter,ui);dispatch_source_cancel(timer);}
+            if(!follow) follow=installFollowCompatibility();
+            if((getter&&ui&&follow)||++attempts>=120) {NSLog(@"[ReviseMiyou] getter=%d UI=%d",getter,ui);dispatch_source_cancel(timer);}
         });dispatch_resume(timer);
     });
 }
