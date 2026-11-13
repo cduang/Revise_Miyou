@@ -20,7 +20,7 @@ jobs:
           python3 - <<'PY'
           import os, json, datetime
           from pathlib import Path
-          fields = {"RMY_VERSION":"0.4.0", "RMY_BUILD_TIME":datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"), "RMY_COMMIT":os.environ["GITHUB_SHA"][:12], "RMY_RUN":os.environ["GITHUB_RUN_NUMBER"]}
+          fields = {"RMY_VERSION":"0.5.0", "RMY_BUILD_TIME":datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"), "RMY_COMMIT":os.environ["GITHUB_SHA"][:12], "RMY_RUN":os.environ["GITHUB_RUN_NUMBER"]}
           Path("src/BuildInfo.h").write_text("#pragma once\n" + "".join("#define " + k + " " + json.dumps(v) + "\n" for k,v in fields.items()))
           Path("build/BUILD_INFO.json").write_text(json.dumps(fields, indent=2))
           PY
@@ -31,7 +31,7 @@ jobs:
           shasum -a 256 build/ReviseMiyouSchedule.dylib > build/SHA256SUMS
       - uses: actions/upload-artifact@v6
         with:
-          name: ReviseMiyouSchedule-original-alert-footer-v4-arm64
+          name: ReviseMiyouSchedule-independent-editor-v5-arm64
           path: |
             build/ReviseMiyouSchedule.dylib
             build/SHA256SUMS

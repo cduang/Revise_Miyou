@@ -17,9 +17,8 @@ static __thread unsigned settingsDepth;
 static BOOL filteredGetter(id self, SEL cmd) {
     BOOL original = originalGetter(self, cmd);
     NSUserDefaults *d = NSUserDefaults.standardUserDefaults;
-    if (settingsDepth || !original || ![d boolForKey:Enabled]) return original;
     NSDateComponents *c = [NSCalendar.currentCalendar components:NSCalendarUnitHour|NSCalendarUnitMinute fromDate:NSDate.date];
-    return !MYInWindow((int)(c.hour*60+c.minute), (int)[d integerForKey:Start], (int)[d integerForKey:End]);
+    return MYKeywordAllowed(original, [d boolForKey:Enabled], settingsDepth != 0, (int)(c.hour*60+c.minute), (int)[d integerForKey:Start], (int)[d integerForKey:End]);
 }
 static BOOL parseTime(NSString *s, int *out) {
     if(s.length != 5 || [s characterAtIndex:2] != ':') return NO;
@@ -43,90 +42,38 @@ static void scheduleChanged(id self, SEL cmd, id sender) {
     [NSUserDefaults.standardUserDefaults setBool:enabled forKey:Enabled];
     reloadSettings(self);
 }
-// Capture the exact class instantiated while the ORIGINAL time editor executes.
-static Class observedAlertClass;
-static unsigned originalEditorDepth;
-static void (*originalTimeEditor)(id, SEL);
-static char initHookKey;
-static id captureAlertInit(id self, SEL cmd, id title, id message) {
-    Class cls=object_getClass(self);
-    NSValue *stored=nil;
-    for(Class c=cls;c && !stored;c=class_getSuperclass(c)) stored=objc_getAssociatedObject(c,&initHookKey);
-    id (*imp)(id,SEL,id,id)=(void *)stored.pointerValue;
-    if(!imp) return nil;
-    id result=imp(self,cmd,title,message);
-    if(originalEditorDepth && result) {
-        observedAlertClass=object_getClass(result);
-        NSLog(@"[ReviseMiyou] confirmed original time alert class: %@",NSStringFromClass(observedAlertClass));
-    }
-    return result;
-}
-static void observeTimeEditor(id self, SEL cmd) {
-    originalEditorDepth++;
-    @try { originalTimeEditor(self,cmd); }
-    @finally { originalEditorDepth--; }
-}
-static BOOL alertAPI(Class cls) {
-    NSArray *names=@[@"initWithTitle:message:",@"showTextFieldWithMaxLen:",@"setTextFieldDefaultText:",@"getTextFieldText",@"addBtnTitle:handler:",@"addCancelBtnTitle:target:sel:",@"show"];
-    unsigned counts[]={4,3,3,2,4,5,2};
-    for(unsigned j=0;j<names.count;j++) {
-        Method m=class_getInstanceMethod(cls,NSSelectorFromString(names[j]));
-        if(!m || method_getNumberOfArguments(m)!=counts[j]) return NO;
-    }
-    return YES;
-}
-static void installAlertObservation(void) {
-    unsigned count=0; Class *classes=objc_copyClassList(&count);
-    SEL sel=NSSelectorFromString(@"initWithTitle:message:");
-    // Only hook implementations owned by the class, avoiding inherited IMP recursion.
-    for(unsigned i=0;i<count;i++) {
-        Class cls=classes[i]; if(!alertAPI(cls)) continue;
-        unsigned n=0;Method *methods=class_copyMethodList(cls,&n);
-        for(unsigned j=0;j<n;j++) if(method_getName(methods[j])==sel) {
-            Method m=methods[j];
-            objc_setAssociatedObject(cls,&initHookKey,[NSValue valueWithPointer:method_getImplementation(m)],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            method_setImplementation(m,(IMP)captureAlertInit);
-            break;
-        }
-        free(methods);
-    }
-    free(classes);
-}
-static Class nativeAlertClass(void) { return observedAlertClass; }
-static BOOL showNativeSchedule(id owner) {
-    Class cls=nativeAlertClass(); if(!cls) return NO;
-    NSUserDefaults *d=NSUserDefaults.standardUserDefaults;
-    id a=((id(*)(id,SEL))objc_msgSend)((id)cls,@selector(alloc));
-    a=((id(*)(id,SEL,id,id))objc_msgSend)(a,NSSelectorFromString(@"initWithTitle:message:"),@"关键词在线时间段",@"请输入 HH:mm-HH:mm，例如 08:00-23:00。该时段不回复，范围外按原规则回复；支持跨午夜。相同起止表示不暂停。");
-    if(!a) return NO;
-    ((void(*)(id,SEL,NSUInteger))objc_msgSend)(a,NSSelectorFromString(@"showTextFieldWithMaxLen:"),100);
-    NSString *text=[NSString stringWithFormat:@"%@-%@",formatTime([d integerForKey:Start]),formatTime([d integerForKey:End])];
-    ((void(*)(id,SEL,id))objc_msgSend)(a,NSSelectorFromString(@"setTextFieldDefaultText:"),text);
-    // Weak reference avoids a retained alert -> callback -> alert cycle.
-    __weak id weakAlert=a;
-    void (^save)(void)=^{
-        id alert=weakAlert; if(!alert) return;
-        id value=((id(*)(id,SEL))objc_msgSend)(alert,NSSelectorFromString(@"getTextFieldText"));
-        if(![value isKindOfClass:NSString.class]) return;
-        NSArray *parts=[value componentsSeparatedByString:@"-"]; int start,end;
-        if(parts.count!=2 || !parseTime(parts[0],&start) || !parseTime(parts[1],&end)) {
-            UIAlertController *error=[UIAlertController alertControllerWithTitle:@"时间格式错误" message:@"未保存，请输入 HH:mm-HH:mm，例如 08:00-23:00。" preferredStyle:UIAlertControllerStyleAlert];
-            [error addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleCancel handler:nil]];
-            [(UIViewController *)owner presentViewController:error animated:YES completion:nil]; return;
-        }
-        [d setInteger:start forKey:Start];[d setInteger:end forKey:End];reloadSettings(owner);
-    };
-    ((void(*)(id,SEL,id,id,SEL))objc_msgSend)(a,NSSelectorFromString(@"addCancelBtnTitle:target:sel:"),@"取消",nil,NULL);
-    ((void(*)(id,SEL,id,id))objc_msgSend)(a,NSSelectorFromString(@"addBtnTitle:handler:"),@"保存",save);
-    ((void(*)(id,SEL))objc_msgSend)(a,NSSelectorFromString(@"show")); return YES;
-}
+// Independent editor: available immediately, without touching the original editor.
 static void editSchedule(id self, SEL cmd) {
     UIViewController *vc=(UIViewController *)self;
     if(vc.presentedViewController) return;
-    if(showNativeSchedule(self)) return;
-    UIAlertController *notice=[UIAlertController alertControllerWithTitle:@"需要确认原版输入控件" message:@"请先打开一次普通自动回复的在线时间弹窗，点击取消，再返回设置关键词时间。补丁将复用这次实际使用的控件类，不再显示不同样式的回退输入框。" preferredStyle:UIAlertControllerStyleAlert];
-    [notice addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleCancel handler:nil]];
-    [vc presentViewController:notice animated:YES completion:nil];
+    NSUserDefaults *d=NSUserDefaults.standardUserDefaults;
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"关键词在线时间段" message:@"在线时段内暂停关键词回复，范围外按原规则回复。支持跨午夜；相同起止不暂停。保存不会改变开关状态。" preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder=@"08:00-23:00";
+        field.text=[NSString stringWithFormat:@"%@-%@",formatTime([d integerForKey:Start]),formatTime([d integerForKey:End])];
+        field.autocorrectionType=UITextAutocorrectionTypeNo;
+        field.autocapitalizationType=UITextAutocapitalizationTypeNone;
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    __weak UIAlertController *weakAlert=alert;
+    [alert addAction:[UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *value=[weakAlert.textFields.firstObject.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        value=[value stringByReplacingOccurrencesOfString:@"：" withString:@":"];
+        value=[value stringByReplacingOccurrencesOfString:@"–" withString:@"-"];
+        value=[value stringByReplacingOccurrencesOfString:@"－" withString:@"-"];
+        NSArray *parts=[value componentsSeparatedByString:@"-"]; int start,end;
+        if(parts.count!=2 || !parseTime(parts[0],&start) || !parseTime(parts[1],&end)) {
+            dispatch_async(dispatch_get_main_queue(),^{
+                UIAlertController *error=[UIAlertController alertControllerWithTitle:@"未保存：时间格式错误" message:@"请输入 HH:mm-HH:mm，例如 08:00-23:00。原时间和开关保持不变。" preferredStyle:UIAlertControllerStyleAlert];
+                [error addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleCancel handler:nil]];
+                [vc presentViewController:error animated:YES completion:nil];
+            });
+            return;
+        }
+        [d setInteger:start forKey:Start]; [d setInteger:end forKey:End];
+        reloadSettings(self);
+    }]];
+    [vc presentViewController:alert animated:YES completion:nil];
 }
 
 static void addSection(id self, SEL cmd, id section) {
@@ -206,18 +153,12 @@ static BOOL installUI(void) {
     originalAddSection=(void *)method_getImplementation(class_getInstanceMethod(manager,add));
     replaceMethod(manager,add,(IMP)addSection);
     replaceMethod(cls,section,(IMP)keywordSection);
-    SEL editor=NSSelectorFromString(@"ReplyOnlineTime");
-    if(hasSignature(cls,editor,2,"v")) {
-        installAlertObservation();
-        originalTimeEditor=(void *)method_getImplementation(class_getInstanceMethod(cls,editor));
-        replaceMethod(cls,editor,(IMP)observeTimeEditor);
-    }
     SEL layout=@selector(viewDidLayoutSubviews);
     if(hasSignature(cls,layout,2,"v")) {
         originalLayout=(void *)method_getImplementation(class_getInstanceMethod(cls,layout));
         replaceMethod(cls,layout,(IMP)settingsLayout);
     }
-    NSLog(@"[ReviseMiyou] inline keyword schedule and build footer installed (v4)");
+    NSLog(@"[ReviseMiyou] inline keyword schedule and build footer installed (v5)");
     return YES;
 }
 // This only bypasses the local follow prerequisite. It is not a security fix.
