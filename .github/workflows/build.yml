@@ -1,0 +1,30 @@
+name: Build keyword schedule
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test time boundaries
+        run: |
+          mkdir -p build
+          clang -Wall -Wextra -Werror tests/time_window.c -o build/test-time
+          ./build/test-time
+      - name: Build ARM64 iOS companion patch
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -fblocks -dynamiclib -Wall -Wextra -Wno-unused-parameter -framework Foundation -framework UIKit -install_name @rpath/ReviseMiyouSchedule.dylib src/KeywordSchedule.m -o build/ReviseMiyouSchedule.dylib
+          codesign --force --sign - build/ReviseMiyouSchedule.dylib
+          file build/ReviseMiyouSchedule.dylib
+          shasum -a 256 build/ReviseMiyouSchedule.dylib > build/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ReviseMiyouSchedule-experimental-arm64
+          path: |
+            build/ReviseMiyouSchedule.dylib
+            build/SHA256SUMS
