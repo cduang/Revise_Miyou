@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Test time boundaries
         run: |
           mkdir -p build
@@ -22,9 +22,9 @@ jobs:
           codesign --force --sign - build/ReviseMiyouSchedule.dylib
           file build/ReviseMiyouSchedule.dylib
           shasum -a 256 build/ReviseMiyouSchedule.dylib > build/SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
-          name: ReviseMiyouSchedule-experimental-arm64
+          name: ReviseMiyouSchedule-inline-switch-v2-arm64
           path: |
             build/ReviseMiyouSchedule.dylib
             build/SHA256SUMS
