@@ -1,0 +1,40 @@
+name: Build standalone keyword reply
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  standalone:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Test independent rule and time engine
+        run: |
+          mkdir -p build-standalone
+          clang -fobjc-arc -Wall -Wextra -Werror -framework Foundation -Istandalone standalone/Engine.m standalone/Tests.m -o build-standalone/test-engine
+          ./build-standalone/test-engine
+      - name: Build standalone iOS ARM64 dylib
+        run: |
+          python3 - <<'PY'
+          import os, json, datetime
+          from pathlib import Path
+          fields = {"RKW_VERSION":"0.1.0-experimental", "RKW_BUILD":datetime.datetime.now(datetime.timezone.utc).isoformat(), "RKW_COMMIT":os.environ["GITHUB_SHA"]}
+          Path("standalone/BuildInfo.h").write_text("#pragma once\n" + "".join("#define " + k + " " + json.dumps(v) + "\n" for k,v in fields.items()))
+          Path("build-standalone/BUILD_INFO.json").write_text(json.dumps(fields, indent=2))
+          PY
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -fblocks -dynamiclib -Wall -Wextra -Werror -Wno-unused-parameter -framework Foundation -framework UIKit -install_name @rpath/ReviseKeywordStandalone.dylib standalone/Engine.m standalone/Plugin.m -o build-standalone/ReviseKeywordStandalone.dylib
+          codesign --force --sign - build-standalone/ReviseKeywordStandalone.dylib
+          otool -L build-standalone/ReviseKeywordStandalone.dylib | tee build-standalone/DEPENDENCIES.txt
+          ! grep -Ei 'MiYou|ReviseMiyouSchedule' build-standalone/DEPENDENCIES.txt
+          shasum -a 256 build-standalone/ReviseKeywordStandalone.dylib > build-standalone/SHA256SUMS
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ReviseKeywordStandalone-experimental-arm64
+          path: |
+            build-standalone/ReviseKeywordStandalone.dylib
+            build-standalone/BUILD_INFO.json
+            build-standalone/DEPENDENCIES.txt
+            build-standalone/SHA256SUMS

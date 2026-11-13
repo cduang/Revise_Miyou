@@ -1,3 +1,9 @@
+# 独立开源版（新增）
+
+见 [standalone/README.md](standalone/README.md)：独立关键词自动回复及在线时间设置，无需原 MiYou 库。源码已编写，实验性微信适配尚未实机验证。请下载 **Build standalone keyword reply** 工作流的 `ReviseKeywordStandalone-experimental-arm64`，不要与下面旧补丁混淆。
+
+---
+
 # Revise_Miyou
 
 MiYou 关键词自动回复时间限制的**实验性独立补丁**，不是原插件源码还原，也不是修改完成并验证的 MiYou.dylib。
