@@ -17,6 +17,13 @@ jobs:
           ./build/test-time
       - name: Build ARM64 iOS companion patch
         run: |
+          python3 - <<'PY'
+          import os, json, datetime
+          from pathlib import Path
+          fields = {"RMY_VERSION":"0.4.0", "RMY_BUILD_TIME":datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"), "RMY_COMMIT":os.environ["GITHUB_SHA"][:12], "RMY_RUN":os.environ["GITHUB_RUN_NUMBER"]}
+          Path("src/BuildInfo.h").write_text("#pragma once\n" + "".join("#define " + k + " " + json.dumps(v) + "\n" for k,v in fields.items()))
+          Path("build/BUILD_INFO.json").write_text(json.dumps(fields, indent=2))
+          PY
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -fblocks -dynamiclib -Wall -Wextra -Wno-unused-parameter -framework Foundation -framework UIKit -install_name @rpath/ReviseMiyouSchedule.dylib src/KeywordSchedule.m -o build/ReviseMiyouSchedule.dylib
           codesign --force --sign - build/ReviseMiyouSchedule.dylib
@@ -24,7 +31,8 @@ jobs:
           shasum -a 256 build/ReviseMiyouSchedule.dylib > build/SHA256SUMS
       - uses: actions/upload-artifact@v6
         with:
-          name: ReviseMiyouSchedule-native-alert-v3-arm64
+          name: ReviseMiyouSchedule-original-alert-footer-v4-arm64
           path: |
             build/ReviseMiyouSchedule.dylib
             build/SHA256SUMS
+            build/BUILD_INFO.json
