@@ -28,7 +28,7 @@ jobs:
           xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" -miphoneos-version-min=16.0 -fobjc-arc -fblocks -dynamiclib -Wall -Wextra -Werror -Wno-unused-parameter -framework Foundation -framework UIKit -install_name @rpath/ReviseKeywordStandalone.dylib standalone/Engine.m standalone/Plugin.m -o build-standalone/ReviseKeywordStandalone.dylib
           codesign --force --sign - build-standalone/ReviseKeywordStandalone.dylib
           otool -L build-standalone/ReviseKeywordStandalone.dylib | tee build-standalone/DEPENDENCIES.txt
-          ! grep -Ei 'MiYou|ReviseMiyouSchedule' build-standalone/DEPENDENCIES.txt
+          if grep -Ei 'MiYou|ReviseMiyouSchedule' build-standalone/DEPENDENCIES.txt; then exit 1; fi
           shasum -a 256 build-standalone/ReviseKeywordStandalone.dylib > build-standalone/SHA256SUMS
       - uses: actions/upload-artifact@v6
         with:

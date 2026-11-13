@@ -150,7 +150,7 @@ static BOOL installReceive(void) {
     [self presentViewController:a animated:YES completion:nil];
 }
 - (void)addRule {[self editRule:NSNotFound];}
-- (void)editRule:(NSInteger)index {
+- (void)editRule:(NSUInteger)index {
     NSArray *rules=config()[@"rules"];NSDictionary *r=index==NSNotFound?@{}:rules[index];
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"关键词规则" message:@"区分大小写；按照列表顺序选择首条匹配。" preferredStyle:UIAlertControllerStyleAlert];
     for(NSString *k in @[@"keyword",@"reply"]) [a addTextFieldWithConfigurationHandler:^(UITextField *f){f.placeholder=[k isEqual:@"keyword"]?@"关键词（1-512字）":@"回复文本（1-2048字）";f.text=r[k];}];
